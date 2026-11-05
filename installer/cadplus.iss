@@ -1,9 +1,9 @@
 ﻿; Установщик Cad+ для Windows 10/11 (Inno Setup 6).
-; Сборка: iscc /DAppVersion=0.1.0 installer\cadplus.iss  — после cargo build --release -p cadplus-gui.
+; Сборка: iscc /DAppVersion=0.2.0 installer\cadplus.iss  — после cargo build --release -p cadplus-gui.
 ; Обычно его собирает GitHub Actions (.github/workflows/release.yml).
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 
 [Setup]

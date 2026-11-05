@@ -3,11 +3,16 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # Совпадает с версией в rust-toolchain.toml и с ядром yadro.
 rust-version = "1.97"
 publish = false
+
+[workspace.dependencies]
+# Собственное CAD-ядро: отдельный репозиторий, без сторонних библиотек. Закреплено
+# номером коммита (ядро 0.2.0 — ступень 1 закончена); новая версия ядра — новый rev.
+yadro-core = { git = "https://github.com/wardjonefscek/Yadryshko", rev = "a0f85fef6e81aed5d63116b5978f32968ca570fa" }
 
 [workspace.lints.rust]
 # Как и в ядре: unsafe-кода в проекте нет и не должно быть.

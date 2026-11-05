@@ -4,6 +4,10 @@ use crate::airfoil::Airfoil;
 use cadplus_aero::analysis::RibLoad;
 use cadplus_aero::{Section, Spar};
 use serde::{Deserialize, Serialize};
+use yadro_core::{Path, Region, Ring, Vec2};
+
+/// Допуск хорды для окружностей отверстий в булевых операциях ядра, мм.
+pub const CHORD_TOL_MM: f64 = 0.002;
 
 /// Точка на плоскости нервюры, мм: x — от носка по хорде, y — вверх.
 pub type Pt = (f64, f64);
@@ -67,6 +71,21 @@ impl Hole {
         }
     }
 
+    /// Контур отверстия для ядра: окружность — настоящими дугами, вырез — прямоугольником.
+    pub fn path(&self) -> Path {
+        let c = Vec2::new(self.center.0, self.center.1);
+        match self.shape {
+            HoleShape::Circle { d } => Path::circle(c, d / 2.0),
+            HoleShape::Rect { w, h } => Path::rounded_rect(
+                c.x - w / 2.0,
+                c.y - h / 2.0,
+                c.x + w / 2.0,
+                c.y + h / 2.0,
+                0.0,
+            ),
+        }
+    }
+
     /// Половина высоты отверстия на расстоянии `dx` от центра по хорде (None — вне отверстия).
     fn half_height_at(&self, dx: f64) -> Option<f64> {
         match self.shape {
@@ -125,6 +144,26 @@ impl RibGeometry {
     /// Площадь контура без отверстий, мм².
     pub fn outline_area(&self) -> f64 {
         polygon_area(&self.outline)
+    }
+
+    /// Контур профиля областью ядра (на сетке 1 мкм).
+    pub fn outline_region(&self) -> Region {
+        let pts: Vec<Vec2> = self.outline.iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+        Ring::from_mm(&pts).map_or_else(|_| Region::empty(), Region::from_ring)
+    }
+
+    /// Отверстия областью ядра (окружности — с допуском хорды [`CHORD_TOL_MM`]).
+    pub fn holes_region(&self) -> Region {
+        self.holes
+            .iter()
+            .filter_map(|h| h.path().to_region(CHORD_TOL_MM).ok())
+            .fold(Region::empty(), |acc, r| acc.union(&r))
+    }
+
+    /// Деталь без облегчения: контур профиля минус отверстия — точными булевыми
+    /// операциями ядра (отверстие, вылезшее за контур, учитывается верно).
+    pub fn region(&self) -> Region {
+        self.outline_region().difference(&self.holes_region())
     }
 
     /// Короткая подпись латиницей для DXF: «R1 z0 x2».
@@ -187,9 +226,16 @@ pub fn build(
         force_n: rib.force_n,
         quantity: 2,
     };
+    let outline = geom.outline_region();
     for h in &geom.holes {
         let wall = wall_thickness(&geom, h);
-        if wall < 0.0 {
+        // Вылезает ли отверстие за контур — точно, булевой операцией ядра.
+        let outside = h
+            .path()
+            .to_region(CHORD_TOL_MM)
+            .map(|r| r.difference(&outline).area_mm2())
+            .unwrap_or(0.0);
+        if wall < 0.0 || outside > 1e-6 {
             warnings.push(format!(
                 "{name}: отверстие «{}» не помещается в профиль.",
                 h.label

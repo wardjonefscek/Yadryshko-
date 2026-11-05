@@ -4,20 +4,24 @@
 //! 2. [`setup::build`] — сетка, запретные зоны (кромка, кольца), закрепление на лонжеронах,
 //!    нагрузка на верхний контур.
 //! 3. [`optimize`] — топооптимизация SIMP ([`cadplus_topopt`]).
-//! 4. [`finalize`] — облегчающие вырезы с учётом технологии: для ЧПУ остаются только места,
-//!    куда проходит фреза; контуры, масса до и после.
+//! 4. [`finalize`] — облегчающие вырезы с учётом технологии: контур по полю плотности,
+//!    только места, куда проходит фреза (или сопло); масса до и после.
 //! 5. [`export`] — DXF и SVG.
+//!
+//! Геометрию строит собственное ядро yadro (`yadro_core`): профиль из .dat, деталь
+//! «контур минус отверстия», вырезы из поля плотности, проверку под инструмент,
+//! восстановление дуг и файлы для станка. Все операции — точные, на сетке 1 мкм.
 
 pub mod airfoil;
-pub mod contour;
 pub mod export;
 pub mod geom;
 pub mod setup;
 
 use cadplus_topopt::{Cell, Control, Iteration, Settings, Solution};
-use geom::{Pt, RibGeometry, polygon_area};
+use geom::{Pt, RibGeometry};
 use serde::{Deserialize, Serialize};
 use setup::{Grid, RibSetup};
+use yadro_core::{ContourOptions, DensityField, Region, Vec2};
 
 /// Технология изготовления нервюр.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -183,7 +187,20 @@ where
     cadplus_topopt::solve(&setup.problem, &settings.solver(), on_iter).map_err(|e| e.to_string())
 }
 
+/// Во сколько раз уплотнять поле плотности перед построением контура: граница
+/// получается плавной, а не по клеткам сетки.
+const CONTOUR_REFINE: usize = 2;
+
 /// Перевести плотности в вырезы с учётом технологии и посчитать массу.
+///
+/// 1. Поле плотности → область материала (ядро: marching squares с уплотнением).
+///    Вне оптимизируемой области (кромка, кольца, отверстия, снаружи) плотность
+///    считается единицей — там всегда материал.
+/// 2. Вырезы = деталь минус материал; островки материала внутри выреза убираются
+///    (они ни к чему не крепятся).
+/// 3. Инструмент: остаётся только то, куда целиком проходит круг радиуса фрезы или
+///    сопла (opening), — узкие щели закрываются, углы вырезов скругляются.
+/// 4. Вырезы меньше круга двойного диаметра инструмента не делаются.
 pub fn finalize(
     setup: &RibSetup,
     density: &[f64],
@@ -195,41 +212,56 @@ pub fn finalize(
     let g = &setup.geometry;
     let grid: &Grid = &setup.grid;
     let cells = &setup.problem.cells;
-    let pocket: Vec<bool> = cells
-        .iter()
-        .zip(density)
-        .map(|(&c, &d)| c == Cell::Active && d < settings.threshold)
-        .collect();
-    // Вырез должен пропускать инструмент: открытие маски кругом радиуса инструмента
-    // (с запасом в полэлемента на дискретизацию).
-    let r_px = (settings.manufacturing.tool_radius_mm() + 0.5 * grid.h) / grid.h;
-    let millable = contour::open(&pocket, grid.nelx, grid.nely, r_px);
-    let mut pockets: Vec<Vec<Pt>> = contour::trace(&millable, grid)
-        .into_iter()
-        .map(|p| contour::simplify(&contour::chaikin(&p, 2), 0.02))
-        .filter(|p| p.len() >= 3)
-        .collect();
-    // Вырезы меньше круга двойного диаметра инструмента почти не облегчают деталь,
-    // а время обработки добавляют — оставляем там материал.
-    let r = settings.manufacturing.tool_radius_mm();
-    let min_area = 4.0 * std::f64::consts::PI * r * r;
-    pockets.retain(|p| polygon_area(p) > min_area);
-    let holes: f64 = g.holes.iter().map(|h| h.area()).sum();
-    let before = g.outline_area() - holes;
-    let cut: f64 = pockets.iter().map(|p| polygon_area(p)).sum();
-    let after = before - cut;
-    let mass = |a: f64| a * thickness_mm * density_g_cm3 / 1000.0;
+    let part0 = g.region();
     let mut warnings = Vec::new();
-    let removed_by_tool = pocket
+    // Ряд j = 0 у Cad+ — верхний, у ядра — нижний.
+    let origin = Vec2::new(grid.x0, grid.ytop - grid.nely as f64 * grid.h);
+    let field = DensityField::from_fn(grid.nelx, grid.nely, grid.h, origin, |i, jb| {
+        let e = i * grid.nely + (grid.nely - 1 - jb);
+        if cells[e] == Cell::Active {
+            density[e]
+        } else {
+            1.0
+        }
+    });
+    let opts = ContourOptions {
+        threshold: settings.threshold,
+        refine: CONTOUR_REFINE,
+        ..ContourOptions::default()
+    };
+    let material = match field.and_then(|f| f.contour(&opts)) {
+        Ok(m) => m,
+        Err(e) => {
+            warnings.push(format!(
+                "Нервюра {}: контур по полю плотности не построен ({e}) — нервюра сплошная.",
+                g.index + 1
+            ));
+            part0.clone()
+        }
+    };
+    let raw = part0.difference(&material).drop_small(0.0, f64::INFINITY);
+    let r = settings.manufacturing.tool_radius_mm();
+    let millable = raw
+        .opening(r)
+        .unwrap_or_else(|_| Region::empty())
+        .drop_small(0.0, f64::INFINITY);
+    let min_area = 4.0 * std::f64::consts::PI * r * r;
+    let pockets_region = millable.drop_small(min_area, 0.0);
+    let part = part0.difference(&pockets_region);
+    let pockets: Vec<Vec<Pt>> = pockets_region
+        .rings()
         .iter()
-        .zip(&millable)
-        .filter(|(a, b)| **a && !**b)
-        .count();
-    if removed_by_tool > 0 {
+        .map(|ring| ring.to_mm().into_iter().map(|p| (p.x, p.y)).collect())
+        .collect();
+    let before = part0.area_mm2();
+    let after = part.area_mm2();
+    let mass = |a: f64| a * thickness_mm * density_g_cm3 / 1000.0;
+    // Скругление углов вырезов фрезой — не повод для предупреждения; закрытая щель — да.
+    let closed = raw.area_mm2() - millable.area_mm2();
+    if closed > 4.0 * r * r {
         warnings.push(format!(
-            "Нервюра {}: {:.0} мм² узких вырезов закрыто материалом — туда не проходит инструмент.",
-            g.index + 1,
-            removed_by_tool as f64 * grid.h * grid.h
+            "Нервюра {}: {closed:.0} мм² узких вырезов закрыто материалом — туда не проходит инструмент.",
+            g.index + 1
         ));
     }
     if let Some(s) = sol

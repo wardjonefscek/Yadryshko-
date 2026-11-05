@@ -154,3 +154,120 @@ fn dxf_has_every_part_twice_and_fits_the_sheet() {
         "на поле 200×200 нервюры 220 мм не помещаются"
     );
 }
+
+/// Плотность «как после оптимизации»: материал везде, кроме полосы высотой `w` мм
+/// посередине профиля между x = 60 и 140 мм.
+fn slot_density(st: &setup::RibSetup, w: f64) -> Vec<f64> {
+    let (nelx, nely) = (st.grid.nelx, st.grid.nely);
+    let g = &st.geometry;
+    let mut d = vec![1.0; nelx * nely];
+    for i in 0..nelx {
+        for j in 0..nely {
+            let (x, y) = st.grid.center(i, j);
+            let mid = 0.5 * (g.upper_at(x) + g.lower_at(x));
+            if (60.0..140.0).contains(&x) && (y - mid).abs() < w / 2.0 {
+                d[i * nely + j] = 0.0;
+            }
+        }
+    }
+    d
+}
+
+fn region_of(p: &[Vec<(f64, f64)>]) -> yadro_core::Region {
+    let rings: Vec<yadro_core::Ring> = p
+        .iter()
+        .map(|r| {
+            let pts: Vec<yadro_core::Vec2> = r
+                .iter()
+                .map(|&(x, y)| yadro_core::Vec2::new(x, y))
+                .collect();
+            yadro_core::Ring::from_mm(&pts).unwrap()
+        })
+        .collect();
+    yadro_core::Region::from_rings_nonzero(&rings)
+}
+
+#[test]
+fn cutter_decides_what_is_cut() {
+    let (a, spars) = analysis();
+    let s = RibSettings {
+        element_mm: 0.5,
+        ..RibSettings::default()
+    };
+    let (g, _) = prepare_all(&Airfoil::clark_y(), &a, &spars, &s, 0.0).remove(0);
+    let st = setup::build(&g, &grid_params(&s, 20_000.0, 0.15, 2.0)).unwrap();
+    // Щель 1,5 мм уже фрезы Ø2 — закрыта, с предупреждением.
+    let narrow = finalize(&st, &slot_density(&st, 1.5), None, &s, 2.0, 1.8);
+    assert!(narrow.pockets.is_empty(), "{:?}", narrow.pockets.len());
+    assert!(
+        narrow
+            .warnings
+            .iter()
+            .any(|w| w.contains("не проходит инструмент"))
+    );
+    // Сопло 0,4 мм при печати такую щель делает.
+    let fdm = RibSettings {
+        manufacturing: Manufacturing::Fdm {
+            nozzle_mm: 0.4,
+            bed_mm: (256.0, 256.0),
+        },
+        ..s.clone()
+    };
+    let printed = finalize(&st, &slot_density(&st, 1.5), None, &fdm, 2.0, 1.8);
+    assert!(!printed.pockets.is_empty());
+    // Широкий вырез 6 мм фреза делает; углы — со скруглением не меньше радиуса фрезы:
+    // вырез совпадает со своим «открытием» кругом фрезы.
+    let wide = finalize(&st, &slot_density(&st, 6.0), None, &s, 2.0, 1.8);
+    assert_eq!(wide.pockets.len(), 1);
+    let p = region_of(&wide.pockets);
+    let again = p.opening(1.0).unwrap();
+    let per: f64 = wide.pockets[0]
+        .iter()
+        .zip(wide.pockets[0].iter().cycle().skip(1))
+        .map(|(a, b)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt())
+        .sum();
+    assert!(
+        p.xor(&again).area_mm2() < per * 0.01,
+        "фреза не проходит везде"
+    );
+    // Масса сходится точно: после = до − вырезы.
+    assert!((wide.area_after_mm2 - (wide.area_before_mm2 - p.area_mm2())).abs() < 1e-6);
+}
+
+#[test]
+fn dxf_reads_back_with_arcs() {
+    let (a, spars) = analysis();
+    let s = quick();
+    let ribs = prepare_all(&Airfoil::clark_y(), &a, &spars, &s, 0.0);
+    let (g, _) = &ribs[1];
+    let st = setup::build(g, &grid_params(&s, 20_000.0, 0.15, 2.0)).unwrap();
+    let r = finalize(&st, &slot_density(&st, 6.0), None, &s, 2.0, 1.8);
+    let parts = vec![export::Part {
+        geometry: g,
+        pockets: &r.pockets,
+    }];
+    let (dxf, _) = export::to_dxf(&parts, (600.0, 600.0));
+    let sheet = yadro_core::Sheet::from_dxf(&dxf).expect("ядро читает свой DXF");
+    let count = |layer: &str| sheet.items().iter().filter(|i| i.layer == layer).count();
+    assert_eq!(
+        (count("CONTOUR"), count("HOLES"), count("POCKETS")),
+        (2, 2, 2)
+    );
+    // Скругления выреза — дугами, а не сотнями отрезков.
+    let pocket = &sheet
+        .items()
+        .iter()
+        .find(|i| i.layer == "POCKETS")
+        .unwrap()
+        .path;
+    assert!(pocket.vertices().iter().any(|v| v.bulge != 0.0));
+    assert!(
+        pocket.len() < r.pockets[0].len() / 3,
+        "{} участков",
+        pocket.len()
+    );
+    // Подписи — латиницей, в DXF есть.
+    assert!(dxf.contains("TEXT\n8\nLABELS"));
+    let svg = export::to_svg(&parts, (600.0, 600.0));
+    assert!(svg.contains("mm\" height=") && svg.contains("Нервюра 2"));
+}

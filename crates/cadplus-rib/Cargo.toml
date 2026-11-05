@@ -13,3 +13,4 @@ workspace = true
 cadplus-aero = { path = "../cadplus-aero" }
 cadplus-topopt = { path = "../cadplus-topopt" }
 serde = { version = "1", features = ["derive"] }
+yadro-core.workspace = true
