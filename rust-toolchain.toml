@@ -1,0 +1,4 @@
+# Та же версия, что в ядре yadro: формат кода и clippy одинаковы у всех.
+[toolchain]
+channel = "1.97.0"
+profile = "default"

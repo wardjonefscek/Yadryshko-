@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Совпадает с версией в rust-toolchain.toml и с ядром yadro.
+rust-version = "1.97"
+publish = false
+
+[workspace.lints.rust]
+# Как и в ядре: unsafe-кода в проекте нет и не должно быть.
+unsafe_code = "forbid"
+
+[profile.release]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Зависимости (egui и др.) собираются с оптимизацией, чтобы окно не тормозило в отладке.
+opt-level = 2
+
+[profile.dev.package.cadplus-topopt]
+# Решатель медленный без оптимизации даже в тестах.
+opt-level = 3

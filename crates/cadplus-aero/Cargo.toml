@@ -1,0 +1,13 @@
+[package]
+name = "cadplus-aero"
+description = "Cad+: нагрузки на крыло, эпюры Q и M, проверка лонжеронов и соединительной трубки"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
