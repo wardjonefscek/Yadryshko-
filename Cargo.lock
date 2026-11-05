@@ -10,6 +10,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadplus-rib"
+version = "0.1.0"
+dependencies = [
+ "cadplus-aero",
+ "cadplus-topopt",
+ "serde",
+]
+
+[[package]]
 name = "cadplus-topopt"
 version = "0.1.0"
 
