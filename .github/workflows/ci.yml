@@ -1,0 +1,24 @@
+# Проверка при каждом push (NFR-11, NFR-12): формат, clippy и тесты на Windows и Linux.
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust из rust-toolchain.toml
+        run: rustup show
+      - name: Формат
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Тесты
+        run: cargo test --workspace --release
+      - name: Сборка программы
+        run: cargo build --release -p cadplus-gui
