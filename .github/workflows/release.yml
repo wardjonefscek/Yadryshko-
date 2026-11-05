@@ -1,10 +1,16 @@
 # Сборка установщиков (NFR-13): Windows — Cad+-<версия>-setup.exe (Inno Setup), Linux — архив с install.sh.
-# Запускается тегом v* (тогда же создаётся релиз на GitHub) или вручную из вкладки Actions.
+# Запускается тегом v* или вручную: вкладка Actions → Release → Run workflow.
+# При ручном запуске с галочкой «Опубликовать» тег v<версия из Cargo.toml> ставится автоматически.
 name: Release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Опубликовать релиз (тег v<версия из Cargo.toml>)"
+        type: boolean
+        default: true
 permissions:
   contents: write
 jobs:
@@ -70,10 +76,11 @@ jobs:
           path: dist/*.tar.gz
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     needs: [windows, linux]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -90,4 +97,5 @@ jobs:
 
           Результаты расчёта — оценка, они не заменяют статические испытания. DXF не отправлять в резку без проверки.
           NOTES
-          gh release create "${{ github.ref_name }}" out/* --repo "${{ github.repository }}" --title "Cad+ ${{ github.ref_name }}" --notes-file notes.md
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then tag="${GITHUB_REF_NAME}"; else tag="v$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"; fi
+          gh release create "$tag" out/* --repo "${{ github.repository }}" --target "${GITHUB_SHA}" --title "Cad+ $tag" --notes-file notes.md
