@@ -9,15 +9,23 @@ mod project;
 mod worker;
 
 fn main() -> eframe::Result {
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title("Cad+ — крыло, лонжероны и нервюры")
+        .with_inner_size([1400.0, 900.0])
+        .with_min_inner_size([900.0, 600.0]);
+    if let Ok(icon) =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/cadplus.png"))
+    {
+        viewport = viewport.with_icon(icon);
+    }
     let mut options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Cad+ — крыло, лонжероны и нервюры")
-            .with_inner_size([1400.0, 900.0])
-            .with_min_inner_size([900.0, 600.0]),
+        viewport,
         ..Default::default()
     };
-    // Запасной вариант для старых видеокарт: CADPLUS_RENDERER=glow.
-    if std::env::var("CADPLUS_RENDERER").is_ok_and(|v| v == "glow") {
+    // Запасной вариант для старых видеокарт: ключ --glow или CADPLUS_RENDERER=glow (OpenGL вместо DirectX 12 / Vulkan).
+    if std::env::args().any(|a| a == "--glow")
+        || std::env::var("CADPLUS_RENDERER").is_ok_and(|v| v == "glow")
+    {
         options.renderer = eframe::Renderer::Glow;
     }
     eframe::run_native(

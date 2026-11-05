@@ -1,0 +1,4 @@
+# Windows: C-рантайм вшивается в cadplus.exe, чтобы программе не требовался
+# отдельно установленный Visual C++ Redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -898,7 +898,7 @@ sequenceDiagram
 | NFR-10 | Модульность и заменяемость подхода к моделированию | Rust workspace: отдельные crates | Все прецеденты | Архитектурный тест на `cargo metadata`: cadplus-kernel и cadplus-topopt не зависят от cadplus-designer и cadplus-gui |
 | NFR-11 | Покрытие тестами ≥ 80%, CI при каждом push | Пайплайн GitHub Actions | US-07 | `cargo llvm-cov --fail-under-lines 80`; правило защиты ветки main запрещает слияние при упавшем CI |
 | NFR-12 | Работа на Windows и Linux без изменения кода | cadplus-solver-server | UC-08, US-08 | Сборка и тесты на матрице GitHub Actions: windows-latest и ubuntu-latest |
-| NFR-13 | Установка одним установщиком ≤ 5 мин, ярлык | Установщик (cargo-dist) | — | Задание CI: тихая установка на чистом раннере windows-latest, проверка ярлыка и запуска `cadplus --version`, время ≤ 5 мин |
+| NFR-13 | Установка одним установщиком ≤ 5 мин, ярлык | Установщик Inno Setup (`installer/cadplus.iss`), сборка в GitHub Actions | — | Задание CI `release.yml`: тихая установка `Cad+-…-setup.exe` на чистом раннере windows-latest без прав администратора, проверка `cadplus.exe` и ярлыка на рабочем столе, тихое удаление |
 | NFR-14 | Модели не покидают сеть, TLS/WireGuard и токен | cadplus-solver-server (TLS tonic, перехватчик токена) | UC-08, US-08 | Интеграционный тест: запрос без токена → `UNAUTHENTICATED`, соединение без TLS отклоняется; `cargo audit` на уязвимости зависимостей |
 
 ### 12.3 Системные ограничения (Constraints)

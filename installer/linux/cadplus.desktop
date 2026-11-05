@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Cad+
+Comment=Расчёт крыла, лонжеронов и нервюр с топооптимизацией
+Exec=cadplus
+Icon=cadplus
+Terminal=false
+Categories=Engineering;Science;
